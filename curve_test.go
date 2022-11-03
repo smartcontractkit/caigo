@@ -55,6 +55,16 @@ func BenchmarkCurveSign(b *testing.B) {
 	}
 }
 
+func TestPrivateToPoint(t *testing.T) {
+	k := big.NewInt(2)
+	x, _ := Curve.testEcMultOptions(t, k)
+
+	expectedX, _ := new(big.Int).SetString("3324833730090626974525872402899302150520188025637965566623476530814354734325", 10)
+	if x.Cmp(expectedX) != 0 {
+		t.Errorf("Actual public key %v different from expected %v", x, expectedX)
+	}
+}
+
 func TestPedersenHash(t *testing.T) {
 	testPedersen := []struct {
 		elements []*big.Int
@@ -206,17 +216,72 @@ func (sc StarkCurve) ecMultOptions() []ecMultOption {
 	}
 }
 
-func FuzzEcMult(f *testing.F) {
-	// Generate the scalar value k, where 0 < k < order(point)
-	var _genScalar = func(a int, b int) (k *big.Int) {
-		k = new(big.Int).Mul(big.NewInt(int64(a)), big.NewInt(int64(b)))
-		k = k.Mul(k, k).Mul(k, k) // generate moar big number
-		k = k.Abs(k)
-		k = k.Add(k, big.NewInt(1)) // edge case: avoid zero
-		k = k.Mod(k, Curve.N)
-		return
-	}
+// Generate the scalar value k, where 0 < k < order(point)
+func (sc StarkCurve) genScalar(a int, b int) (k *big.Int) {
+	k = new(big.Int).Mul(big.NewInt(int64(a)), big.NewInt(int64(b)))
+	k = k.Mul(k, k).Mul(k, k) // generate moar big number
+	k = k.Abs(k)
+	k = k.Add(k, big.NewInt(1)) // edge case: avoid zero
+	k = k.Mod(k, sc.N)
+	return
+}
 
+// Generate the scalar value k, where n number of bits are set, no trailing zeros
+func genScalarBits(n int) (k *big.Int) {
+	k = big.NewInt(1)
+	for i := 1; i < n; i++ {
+		k = k.Lsh(k, 1).Add(k, big.NewInt(1))
+	}
+	return
+}
+
+// Test the scalars are equal modulo the group order, k mod q == K mod q.
+func FuzzScalarRewrite(f *testing.F) {
+	// Seed the fuzzer (examples)
+	f.Add(-12121501143923232, 142312310232324552) // negative numbers used as seeds but the resulting
+	f.Add(41289371293219038, -179566705053432322) // scalar is normalized to 0 < k < order(point)
+	f.Add(302150520188025637, 670505342647705232)
+	f.Add(927302501143912223, 220390912389202149)
+	f.Add(778320444456588442, 932884823101831273)
+	f.Add(874739451078007766, 868575557812948233)
+	f.Add(494910213617956623, 976290247577832044)
+	f.Add(658844239552133924, 933442778319932884)
+
+	f.Fuzz(func(t *testing.T, a int, b int) {
+		k := Curve.genScalar(a, b)
+		kk := Curve.rewriteScalar(k)
+
+		mk := k.Mod(k, Curve.N)
+		mkk := kk.Mod(kk, Curve.N)
+
+		if mk.Cmp(mkk) != 0 {
+			t.Errorf("Scalars not equal equal modulo the group order %v != %v", mk, mkk)
+		}
+	})
+}
+
+func (sc StarkCurve) testEcMultOptions(t *testing.T, k *big.Int) (*big.Int, *big.Int) {
+	var x0, y0 *big.Int
+	for _, tt := range sc.ecMultOptions() {
+		x, y, err := sc.privateToPoint(k, tt.fn)
+		if err != nil {
+			t.Errorf("EcMult err: %v, algo=%v\n", err, tt.algo)
+		}
+
+		// Store the initial result from the first algo and test against it
+		if x0 == nil {
+			x0 = x
+			y0 = y
+		} else if x0.Cmp(x) != 0 {
+			t.Errorf("EcMult x mismatch: %v != %v, algo=%v, k=%v\n", x, x0, tt.algo, k)
+		} else if y0.Cmp(y) != 0 {
+			t.Errorf("EcMult y mismatch: %v != %v, algo=%v, k=%v\n", y, y0, tt.algo, k)
+		}
+	}
+	return x0, y0
+}
+
+func FuzzEcMult(f *testing.F) {
 	// Seed the fuzzer (examples)
 	f.Add(-12121501143923232, 142312310232324552) // negative numbers used as seeds but the resulting
 	f.Add(41289371293219038, -179566705053432322) // scalar is normalized to 0 < k < order(point)
@@ -228,38 +293,27 @@ func FuzzEcMult(f *testing.F) {
 	f.Add(494910213617956623, 976290247577832044)
 
 	f.Fuzz(func(t *testing.T, a int, b int) {
-		k := _genScalar(a, b)
-
-		var x0, y0 *big.Int
-		for _, tt := range Curve.ecMultOptions() {
-			x, y, err := Curve.privateToPoint(k, tt.fn)
-			if err != nil {
-				t.Errorf("EcMult err: %v, algo=%v\n", err, tt.algo)
-			}
-
-			// Store the initial result from the first algo and test against it
-			if x0 == nil {
-				x0 = x
-				y0 = y
-			} else if x0.Cmp(x) != 0 {
-				t.Errorf("EcMult x mismatch: %v != %v, algo=%v\n", x, x0, tt.algo)
-			} else if y0.Cmp(y) != 0 {
-				t.Errorf("EcMult y mismatch: %v != %v, algo=%v\n", y, y0, tt.algo)
-			}
-		}
+		k := Curve.genScalar(a, b)
+		Curve.testEcMultOptions(t, k)
 	})
 }
 
-func BenchmarkEcMultAll(b *testing.B) {
-	// Generate the scalar value k, where n number of bits are set, no trailing zeros
-	var _genScalarBits = func(n int) (k *big.Int) {
-		k = big.NewInt(1)
-		for i := 1; i < n; i++ {
-			k = k.Lsh(k, 1).Add(k, big.NewInt(1))
-		}
-		return
+func TestEcMult(t *testing.T) {
+	// generate numbers with 1 to 251 bits set
+	for i := 1; i < Curve.N.BitLen(); i++ {
+		k := genScalarBits(i)
+		Curve.testEcMultOptions(t, k)
 	}
 
+	// generate numbers with 1 to 250 trailing zero bits set
+	k := genScalarBits(Curve.N.BitLen() - 1)
+	for i := 1; i < Curve.N.BitLen()-1; i++ {
+		k.Rsh(k, uint(i)).Lsh(k, uint(i))
+		Curve.testEcMultOptions(t, k)
+	}
+}
+
+func BenchmarkEcMultAll(b *testing.B) {
 	ecMultiBest := ecMultOption{
 		algo:   "",
 		stddev: math.MaxFloat64,
@@ -277,7 +331,7 @@ func BenchmarkEcMultAll(b *testing.B) {
 		xs := []float64{}
 		// generate numbers with 1 to 251 bits set
 		for i := 1; i < Curve.N.BitLen(); i++ {
-			k := _genScalarBits(i)
+			k := genScalarBits(i)
 			b.Run(fmt.Sprintf("%s/input_bits_len/%d", tt.algo, k.BitLen()), func(b *testing.B) {
 				ns := _test(k)
 				xs = append(xs, float64(ns))
@@ -285,7 +339,7 @@ func BenchmarkEcMultAll(b *testing.B) {
 		}
 
 		// generate numbers with 1 to 250 trailing zero bits set
-		k := _genScalarBits(Curve.N.BitLen() - 1)
+		k := genScalarBits(Curve.N.BitLen() - 1)
 		for i := 1; i < Curve.N.BitLen()-1; i++ {
 			k.Rsh(k, uint(i)).Lsh(k, uint(i))
 			b.Run(fmt.Sprintf("%s/input_bits_len/%d#%d", tt.algo, k.BitLen(), k.TrailingZeroBits()), func(b *testing.B) {
@@ -345,9 +399,6 @@ func (sc StarkCurve) ecMult_DoubleAndAdd(m, x1, y1 *big.Int) (x, y *big.Int) {
 		return sc.Add(e, f, x1, y1)
 	}
 
-	// Notice: no need for scalar rewrite trick via `StarkCurve.rewriteScalar`
-	//   This algorithm is not affected, as it doesn't do a fixed number of operations,
-	//   nor directly depends on the binary representation of the scalar.
 	return _ecMult(m, x1, y1)
 }
 
@@ -355,10 +406,11 @@ func (sc StarkCurve) ecMult_DoubleAndAdd(m, x1, y1 *big.Int) (x, y *big.Int) {
 // Assumes affine form (x, y) is spread (x1 *big.Int, y1 *big.Int) and that 0 < m < order(point).
 //
 // (ref: https://en.wikipedia.org/wiki/Elliptic_curve_point_multiplication#Montgomery_ladder)
+// (ref: https://www.shiftleft.org/papers/ladder/ladder-tches.pdf)
 func (sc StarkCurve) ecMult_Montgomery(m, x1, y1 *big.Int) (x, y *big.Int) {
 	var _ecMultMontgomery = func(m, x0, y0, x1, y1 *big.Int) (x, y *big.Int) {
-		// Do constant number of operations
-		for i := sc.N.BitLen() - 1; i >= 0; i-- {
+		// Do constant number of operations (skip MSB = 1)
+		for i := m.BitLen() - 2; i >= 0; i-- {
 			// Check if next bit set
 			if m.Bit(i) == 0 {
 				x1, y1 = sc.Add(x0, y0, x1, y1)
@@ -368,26 +420,35 @@ func (sc StarkCurve) ecMult_Montgomery(m, x1, y1 *big.Int) (x, y *big.Int) {
 				x1, y1 = sc.Double(x1, y1)
 			}
 		}
+
 		return x0, y0
 	}
 
-	return _ecMultMontgomery(sc.rewriteScalar(m), big.NewInt(0), big.NewInt(0), x1, y1)
+	// Init step: (Q, R) ← (P0, 2P0)
+	x0, y0 := x1, y1
+	x1, y1 = sc.Double(x1, y1)
+	return _ecMultMontgomery(sc.rewriteScalar(m), x0, y0, x1, y1)
 }
 
 // Multiplies by m a point on the elliptic curve with equation y^2 = x^3 + alpha*x + beta mod p.
 // Assumes affine form (x, y) is spread (x1 *big.Int, y1 *big.Int) and that 0 < m < order(point).
 //
 // (ref: https://en.wikipedia.org/wiki/Elliptic_curve_point_multiplication#Montgomery_ladder)
+// (ref: https://www.shiftleft.org/papers/ladder/ladder-tches.pdf)
 func (sc StarkCurve) ecMult_MontgomeryLsh(m, x1, y1 *big.Int) (x, y *big.Int) {
 	var _ecMultMontgomery = func(m, x0, y0, x1, y1 *big.Int) (x, y *big.Int) {
-		// Fill a fixed 32 byte buffer (2 ** 251)
+		// Fill a fixed 32 byte buffer
 		// NOTICE: this will take an absolute value first
 		buf := m.FillBytes(make([]byte, 32))
 
-		for i, byte := range buf {
+		// Start with the bit after the MSB
+		skip := 256 - m.BitLen() + 1
+
+		for _, byte := range buf {
 			for bitNum := 0; bitNum < 8; bitNum++ {
-				// Skip first 4 bits, do constant 252 operations
-				if i == 0 && bitNum < 4 {
+				// Skip first N + 1 bits (N bits padding, 1 MSB)
+				if skip > 0 {
+					skip -= 1
 					byte <<= 1
 					continue
 				}
@@ -403,8 +464,12 @@ func (sc StarkCurve) ecMult_MontgomeryLsh(m, x1, y1 *big.Int) (x, y *big.Int) {
 				byte <<= 1
 			}
 		}
+
 		return x0, y0
 	}
 
-	return _ecMultMontgomery(sc.rewriteScalar(m), big.NewInt(0), big.NewInt(0), x1, y1)
+	// Init step: (Q, R) ← (P0, 2P0)
+	x0, y0 := x1, y1
+	x1, y1 = sc.Double(x1, y1)
+	return _ecMultMontgomery(sc.rewriteScalar(m), x0, y0, x1, y1)
 }

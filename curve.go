@@ -237,34 +237,36 @@ func (sc StarkCurve) MimicEcMultAir(mout, x1, y1, x2, y2 *big.Int) (x *big.Int, 
 // (ref: https://www.semanticscholar.org/paper/Elliptic-Curves-and-Side-Channel-Analysis-Joye/7fc91d3684f1ab63b97d125161daf57af60f2ad9/figure/1)
 // (ref: https://cosade.telecom-paristech.fr/presentations/s2_p2.pdf)
 func (sc StarkCurve) ecMult_DoubleAndAlwaysAdd(m, x1, y1 *big.Int) (x, y *big.Int) {
-	var _ecMult = func(m, x1, y1 *big.Int) (x, y *big.Int) {
-		// Two-index table initialization, Q[0] <- P
+	var _ecMult = func(m, x0, y0, x1, y1 *big.Int) (x, y *big.Int) {
+		// Two-index table initialization, Q[0], Q[1] <- P, 2*P
 		q := [2]struct {
 			x *big.Int
 			y *big.Int
 		}{
 			{
+				x: x0,
+				y: y0,
+			},
+			{
 				x: x1,
 				y: y1,
 			},
-			{
-				x: nil,
-				y: nil,
-			},
 		}
 
-		// Run the algorithm, expects the most-significant bit is 1
-		for i := sc.N.BitLen() - 2; i >= 0; i-- {
-			q[0].x, q[0].y = sc.Double(q[0].x, q[0].y)      // Q[0] <- 2Q[0]
-			q[1].x, q[1].y = sc.Add(q[0].x, q[0].y, x1, y1) // Q[1] <- Q[0] + P
-			b := m.Bit(i)                                   // b    <- bit at position i
-			q[0].x, q[0].y = q[b].x, q[b].y                 // Q[0] <- Q[b]
+		// Run the algorithm, expects the most-significant bit is 1 (skip MSB)
+		for i := m.BitLen() - 2; i >= 0; i-- {
+			b := m.Bit(i)                                               // b    <- bit at position i
+			q[1-b].x, q[1-b].y = sc.Add(q[0].x, q[0].y, q[1].x, q[1].y) // Q[1-b] <- Q[0] + Q[1]
+			q[b].x, q[b].y = sc.Double(q[b].x, q[b].y)                  // Q[b] <- 2Q[b]
 		}
 
 		return q[0].x, q[0].y
 	}
 
-	return _ecMult(sc.rewriteScalar(m), x1, y1)
+	// Init step: (Q, R) ← (P0, 2P0)
+	x0, y0 := x1, y1
+	x1, y1 = sc.Double(x1, y1)
+	return _ecMult(sc.rewriteScalar(m), x0, y0, x1, y1)
 }
 
 // Rewrites k into an equivalent scalar, such that the first bit (the most-significant
