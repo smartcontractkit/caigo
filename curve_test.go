@@ -239,6 +239,11 @@ func genScalarBits(n int) (k *big.Int) {
 func (sc StarkCurve) testScalarRewrite(t *testing.T, k *big.Int) {
 	kk := sc.rewriteScalar(k)
 
+	size := new(big.Int).Lsh(big.NewInt(1), uint(sc.BitSize)) // 2ˆn
+	if kk.Cmp(size) != 1 {
+		t.Errorf("Scalar k' <= 2ˆn (Curve.BitSize) for k = %v, k' = %v, ", k, kk)
+	}
+
 	mk := k.Mod(k, sc.N)
 	mkk := kk.Mod(kk, sc.N)
 
