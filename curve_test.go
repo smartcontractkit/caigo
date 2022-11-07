@@ -235,7 +235,19 @@ func genScalarBits(n int) (k *big.Int) {
 	return
 }
 
-// Test the scalars are equal modulo the group order, k mod q == K mod q.
+// Helper test fn for Curve.rewriteScalar
+func (sc StarkCurve) testScalarRewrite(t *testing.T, k *big.Int) {
+	kk := sc.rewriteScalar(k)
+
+	mk := k.Mod(k, sc.N)
+	mkk := kk.Mod(kk, sc.N)
+
+	if mk.Cmp(mkk) != 0 {
+		t.Errorf("Scalars not equal equal modulo the group order %v != %v", mk, mkk)
+	}
+}
+
+// Fuzz test the scalars are equal modulo the group order, k mod q == K mod q.
 func FuzzScalarRewrite(f *testing.F) {
 	// Seed the fuzzer (examples)
 	f.Add(-12121501143923232, 142312310232324552) // negative numbers used as seeds but the resulting
@@ -249,15 +261,18 @@ func FuzzScalarRewrite(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, a int, b int) {
 		k := Curve.genScalar(a, b)
-		kk := Curve.rewriteScalar(k)
-
-		mk := k.Mod(k, Curve.N)
-		mkk := kk.Mod(kk, Curve.N)
-
-		if mk.Cmp(mkk) != 0 {
-			t.Errorf("Scalars not equal equal modulo the group order %v != %v", mk, mkk)
-		}
+		Curve.testScalarRewrite(t, k)
 	})
+}
+
+// Test the scalars are equal modulo the group order, k mod q == K mod q.
+func TestScalarRewrite(t *testing.T) {
+	// test first and last 1000 numbers
+	for i := 1; i < 1000; i++ {
+		next := big.NewInt(int64(i))
+		Curve.testScalarRewrite(t, next)
+		Curve.testScalarRewrite(t, new(big.Int).Sub(Curve.N, next))
+	}
 }
 
 func (sc StarkCurve) testEcMultOptions(t *testing.T, k *big.Int) (*big.Int, *big.Int) {
@@ -273,9 +288,9 @@ func (sc StarkCurve) testEcMultOptions(t *testing.T, k *big.Int) (*big.Int, *big
 			x0 = x
 			y0 = y
 		} else if x0.Cmp(x) != 0 {
-			t.Errorf("EcMult x mismatch: %v != %v, algo=%v, k=%v\n", x, x0, tt.algo, k)
+			t.Errorf("EcMult x mismatch: %x != %x, algo=%v, k=%v\n", x, x0, tt.algo, k)
 		} else if y0.Cmp(y) != 0 {
-			t.Errorf("EcMult y mismatch: %v != %v, algo=%v, k=%v\n", y, y0, tt.algo, k)
+			t.Errorf("EcMult y mismatch: %x != %x, algo=%v, k=%v\n", y, y0, tt.algo, k)
 		}
 	}
 	return x0, y0
@@ -299,17 +314,26 @@ func FuzzEcMult(f *testing.F) {
 }
 
 func TestEcMult(t *testing.T) {
+	bitLen := Curve.N.BitLen()
+
 	// generate numbers with 1 to 251 bits set
-	for i := 1; i < Curve.N.BitLen(); i++ {
+	for i := 1; i < bitLen; i++ {
 		k := genScalarBits(i)
 		Curve.testEcMultOptions(t, k)
 	}
 
 	// generate numbers with 1 to 250 trailing zero bits set
-	k := genScalarBits(Curve.N.BitLen() - 1)
-	for i := 1; i < Curve.N.BitLen()-1; i++ {
-		k.Rsh(k, uint(i)).Lsh(k, uint(i))
+	k := genScalarBits(bitLen - 1)
+	for i := 1; i < bitLen-1; i++ {
+		k := k.Rsh(k, uint(i)).Lsh(k, uint(i))
 		Curve.testEcMultOptions(t, k)
+	}
+
+	// test first and last 1000 numbers
+	for i := 1; i < 1000; i++ {
+		next := big.NewInt(int64(i))
+		Curve.testEcMultOptions(t, next)
+		Curve.testEcMultOptions(t, new(big.Int).Sub(Curve.N, next))
 	}
 }
 

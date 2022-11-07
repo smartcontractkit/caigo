@@ -237,36 +237,34 @@ func (sc StarkCurve) MimicEcMultAir(mout, x1, y1, x2, y2 *big.Int) (x *big.Int, 
 // (ref: https://www.semanticscholar.org/paper/Elliptic-Curves-and-Side-Channel-Analysis-Joye/7fc91d3684f1ab63b97d125161daf57af60f2ad9/figure/1)
 // (ref: https://cosade.telecom-paristech.fr/presentations/s2_p2.pdf)
 func (sc StarkCurve) ecMult_DoubleAndAlwaysAdd(m, x1, y1 *big.Int) (x, y *big.Int) {
-	var _ecMult = func(m, x0, y0, x1, y1 *big.Int) (x, y *big.Int) {
+	var _ecMult = func(m, x1, y1 *big.Int) (x, y *big.Int) {
 		// Two-index table initialization, Q[0], Q[1] <- P, 2*P
+		dx1, dy1 := sc.Double(x1, y1)
 		q := [2]struct {
 			x *big.Int
 			y *big.Int
 		}{
 			{
-				x: x0,
-				y: y0,
-			},
-			{
 				x: x1,
 				y: y1,
+			},
+			{
+				x: dx1,
+				y: dy1,
 			},
 		}
 
 		// Run the algorithm, expects the most-significant bit is 1 (skip MSB)
-		for i := m.BitLen() - 2; i >= 0; i-- {
-			b := m.Bit(i)                                               // b    <- bit at position i
+		for i := sc.BitSize - 1; i >= 0; i-- {
+			b := m.Bit(i)                                               // b      <- bit at position i
 			q[1-b].x, q[1-b].y = sc.Add(q[0].x, q[0].y, q[1].x, q[1].y) // Q[1-b] <- Q[0] + Q[1]
-			q[b].x, q[b].y = sc.Double(q[b].x, q[b].y)                  // Q[b] <- 2Q[b]
+			q[b].x, q[b].y = sc.Double(q[b].x, q[b].y)                  // Q[b]   <- 2Q[b]
 		}
 
 		return q[0].x, q[0].y
 	}
 
-	// Init step: (Q, R) ← (P0, 2P0)
-	x0, y0 := x1, y1
-	x1, y1 = sc.Double(x1, y1)
-	return _ecMult(sc.rewriteScalar(m), x0, y0, x1, y1)
+	return _ecMult(sc.rewriteScalar(m), x1, y1)
 }
 
 // Rewrites k into an equivalent scalar, such that the first bit (the most-significant
@@ -283,9 +281,9 @@ func (sc StarkCurve) ecMult_DoubleAndAlwaysAdd(m, x1, y1 *big.Int) (x, y *big.In
 // (ref: https://www.shiftleft.org/papers/ladder/ladder-tches.pdf)
 func (sc StarkCurve) rewriteScalar(k *big.Int) *big.Int {
 	size := new(big.Int).Lsh(big.NewInt(1), uint(sc.BitSize)) // 2ˆn
-	mod := new(big.Int).Mod(size, sc.N)                       // 2ˆn mod q
-	diff := new(big.Int).Sub(k, mod)                          // (k - 2ˆn mod q)
-	return new(big.Int).Add(size, diff)                       // 2ˆn + (k - 2ˆn mod q)
+	diff := new(big.Int).Sub(k, size)                         // (k - 2ˆn)
+	diffMod := new(big.Int).Mod(diff, sc.N)                   // (k - 2ˆn) mod q
+	return new(big.Int).Add(size, diffMod)                    // 2ˆn + (k - 2ˆn mod q)
 }
 
 // Multiplies by m a point on the elliptic curve with equation y^2 = x^3 + alpha*x + beta mod p.
