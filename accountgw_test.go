@@ -22,7 +22,6 @@ func TestGatewayAccount_EstimateAndExecute(t *testing.T) {
 		ExecuteCalls []types.FunctionCall
 		QueryCall    types.FunctionCall
 	}
-
 	testSet := map[string][]testSetType{
 		"devnet": {{
 			ExecuteCalls: []types.FunctionCall{{
