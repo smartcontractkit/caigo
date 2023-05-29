@@ -164,6 +164,11 @@ func (sc StarkCurve) ScalarBaseMult(k []byte) (x, y *big.Int) {
 }
 
 func (sc StarkCurve) IsOnCurve(x, y *big.Int) bool {
+	// Infinity is considered part of the curve
+	if len(x.Bits()) == 0 && len(y.Bits()) == 0 {
+		return true
+	}
+
 	left := new(big.Int).Mul(y, y)
 	left = left.Mod(left, sc.P)
 
