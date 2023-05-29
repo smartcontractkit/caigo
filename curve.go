@@ -247,27 +247,135 @@ func (sc StarkCurve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) {
 // Doubles a point on an elliptic curve with the equation y^2 = x^3 + alpha*x + beta mod p.
 // Assumes affine form (x, y) is spread (x1 *big.Int, y1 *big.Int)
 //
-// (ref: https://github.com/starkware-libs/cairo-lang/blob/master/src/starkware/crypto/starkware/crypto/signature/math_utils.py)
-func (sc StarkCurve) Double(x1, y1 *big.Int) (x, y *big.Int) {
-	xin := new(big.Int).Mul(big.NewInt(3), x1)
-	xin = xin.Mul(xin, x1)
-	xin = xin.Add(xin, sc.Alpha)
+// This implements Algorithm 3 of 2015 Renes–Costello–Batina "Complete addition formulas for prime order elliptic curves"
+// (ref: https://eprint.iacr.org/2015/1060.pdf)
+func (sc StarkCurve) Double(x1, y1 *big.Int) (x_out, y_out *big.Int) {
+	b3 := new(big.Int).Mul(sc.B, big.NewInt(3))
+	b3.Mod(b3, sc.P)
 
-	yin := new(big.Int).Mul(y1, big.NewInt(2))
+	// 1. t0 = X * X
+	t0 := new(big.Int).Mul(x1, x1)
+	t0.Mod(t0, sc.P)
 
-	m := DivMod(xin, yin, sc.P)
+	// 2. t1 = Y * Y
+	t1 := new(big.Int).Mul(y1, y1)
+	t1.Mod(t1, sc.P)
 
-	xout := new(big.Int).Mul(m, m)
-	xmed := new(big.Int).Mul(big.NewInt(2), x1)
-	xout = xout.Sub(xout, xmed)
-	xout = xout.Mod(xout, sc.P)
+	// 3. t2 = Z * Z (skipped, Z = 1)
+	t2 := big.NewInt(1)
 
-	yout := new(big.Int).Sub(x1, xout)
-	yout = yout.Mul(m, yout)
-	yout = yout.Sub(yout, y1)
-	yout = yout.Mod(yout, sc.P)
+	// 4. t3 = X * Y
+	t3 := new(big.Int).Mul(x1, y1)
+	t3.Mod(t3, sc.P)
 
-	return xout, yout
+	// 5. t3 = t3 + t3
+	t3.Add(t3, t3)
+	t3.Mod(t3, sc.P)
+
+	// 6. Z3 = X * Z (skipped, Z = 1)
+	z3 := new(big.Int).Set(x1)
+
+	// 7. Z3 = Z3 + Z3
+	z3.Add(z3, z3)
+	z3.Mod(z3, sc.P)
+
+	// 8. X3 = a * Z3
+	x3 := new(big.Int).Mul(sc.Alpha, z3)
+	x3.Mod(x3, sc.P)
+
+	// 9. Y3 = b3 * t2
+	y3 := new(big.Int).Mul(b3, t2)
+	y3.Mod(y3, sc.P)
+
+	// 10. Y3 = X3 + Y3
+	y3.Add(x3, y3)
+	y3.Mod(y3, sc.P)
+
+	// 11. X3 = t1 - Y3
+	x3.Sub(t1, y3)
+	x3.Mod(x3, sc.P)
+
+	// 12. Y3 = t1 + Y3
+	y3.Add(t1, y3)
+	y3.Mod(y3, sc.P)
+
+	// 13. Y3 = X3 * Y3
+	y3.Mul(x3, y3)
+	y3.Mod(y3, sc.P)
+
+	// 14. X3 = t3 * X3
+	x3.Mul(t3, x3)
+	x3.Mod(x3, sc.P)
+
+	// 15. Z3 = b3 * Z3
+	z3.Mul(b3, z3)
+	z3.Mod(z3, sc.P)
+
+	// 16. t2 = a * t2
+	t2.Mul(sc.Alpha, t2)
+	t2.Mod(t2, sc.P)
+
+	// 17. t3 = t0 - t2
+	t3.Sub(t0, t2)
+	t3.Mod(t3, sc.P)
+
+	// 18. t3 = a * t3
+	t3.Mul(sc.Alpha, t3)
+	t3.Mod(t3, sc.P)
+
+	// 19. t3 = t3 + z3
+	t3.Add(t3, z3)
+	t3.Mod(t3, sc.P)
+
+	// 20. z3 = t0 + t0
+	z3.Add(t0, t0)
+	z3.Mod(z3, sc.P)
+
+	// 21. t0 = Z3 + t0
+	t0.Add(z3, t0)
+	t0.Mod(t0, sc.P)
+
+	// 22. t0 = t0 + t2
+	t0.Add(t0, t2)
+	t0.Mod(t0, sc.P)
+
+	// 23. t0 = t0 * t3
+	t0.Mul(t0, t3)
+	t0.Mod(t0, sc.P)
+
+	// 24. Y3 = Y3 + t0
+	y3.Add(y3, t0)
+	y3.Mod(y3, sc.P)
+
+	// 25. t2 = Y * Z (skipped, Z = 1)
+	t2.Set(y1)
+
+	// 26. t2 = t2 + t2
+	t2.Add(t2, t2)
+	t2.Mod(t2, sc.P)
+
+	// 27. t0 = t2 * t3
+	t0.Mul(t2, t3)
+	t0.Mod(t0, sc.P)
+
+	// 28. X3 = X3 - t0
+	x3.Sub(x3, t0)
+	x3.Mod(x3, sc.P)
+
+	// 29. Z3 = t2 * t1
+	z3.Mul(t2, t1)
+	z3.Mod(z3, sc.P)
+
+	// 30. Z3 = Z3 + Z3
+	z3.Add(z3, z3)
+	z3.Mod(z3, sc.P)
+
+	// 31. Z3 = Z3 + Z3
+	z3.Add(z3, z3)
+	z3.Mod(z3, sc.P)
+
+	// Convert to affine point
+	return DivMod(x3, z3, sc.P), DivMod(y3, z3, sc.P)
 }
 
 func (sc StarkCurve) ScalarMult(x1, y1 *big.Int, k []byte) (x, y *big.Int) {
