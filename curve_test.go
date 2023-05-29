@@ -147,11 +147,11 @@ func TestGeneral_Add(t *testing.T) {
 	for _, tt := range testAdd {
 		resX, resY := Curve.Add(Curve.Gx, Curve.Gy, tt.x, tt.y)
 		if resX.Cmp(tt.expectedX) != 0 {
-			t.Errorf("ResX %v does not == expected %v\n", resX, tt.expectedX)
+			t.Errorf("(Gx, Gy) + (%v, %v): ResX %v does not == expected %v\n", tt.x, tt.y, resX, tt.expectedX)
 
 		}
 		if resY.Cmp(tt.expectedY) != 0 {
-			t.Errorf("ResY %v does not == expected %v\n", resY, tt.expectedY)
+			t.Errorf("(Gx, Gy) + (%v, %v): ResY %v does not == expected %v\n", tt.x, tt.y, resY, tt.expectedY)
 		}
 	}
 }
@@ -186,6 +186,39 @@ func TestGeneral_MultAir(t *testing.T) {
 		if y.Cmp(tt.expectedY) != 0 {
 			t.Errorf("ResY %v does not == expected %v\n", y, tt.expectedY)
 		}
+	}
+}
+
+func TestGeneral_Add2(t *testing.T) {
+	Gx, Gy := Curve.EcGenX, Curve.EcGenY
+	k := big.NewInt(int64(5))
+
+	Px, Py := Curve.EcMult(k, Gx, Gy)
+	if !Curve.IsOnCurve(Px, Py) {
+		t.Errorf("k*G is not on the curve")
+	}
+
+	// PInv = -P
+	PInvx, PInvy := Px, new(big.Int).Sub(Curve.Params().P, Py)
+	if !Curve.IsOnCurve(PInvx, PInvy) {
+		t.Errorf("-k*G is not on the curve")
+	}
+
+	// P + PInv = 0
+	sum_x, sum_y := Curve.Add(Px, Py, PInvx, PInvy)
+
+	// result is on curve
+	is_onCurve := Curve.IsOnCurve(sum_x, sum_y)
+	if !is_onCurve {
+		t.Errorf("sum is not on the curve")
+	}
+
+	// result is point at infinity
+	if big.NewInt(0).Cmp(sum_x) != 0 {
+		t.Errorf("sum_x is not 0")
+	}
+	if big.NewInt(0).Cmp(sum_y) != 0 {
+		t.Errorf("sum_y is not 0")
 	}
 }
 
