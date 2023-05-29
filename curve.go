@@ -29,6 +29,7 @@ type StarkCurve struct {
 	Max              *big.Int
 	Alpha            *big.Int
 	ConstantPoints   [][]*big.Int
+	B3               *big.Int
 }
 
 //go:embed pedersen_params.json
@@ -90,6 +91,9 @@ func init() {
 	Curve.Max, _ = new(big.Int).SetString("3618502788666131106986593281521497120414687020801267626233049500247285301248", 10)              // 2 ** 251
 	Curve.Alpha = big.NewInt(1)
 	Curve.BitSize = 252
+
+	Curve.B3 = new(big.Int).Mul(Curve.B, big.NewInt(3))
+	Curve.B3.Mod(Curve.B3, Curve.P)
 }
 
 // Gets two points on an elliptic curve mod p and returns their sum.
@@ -109,9 +113,6 @@ func (sc StarkCurve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) {
 	if len(x2.Bits()) == 0 && len(y2.Bits()) == 0 {
 		return x1, y1
 	}
-
-	b3 := new(big.Int).Mul(sc.B, big.NewInt(3))
-	b3.Mod(b3, sc.P)
 
 	// 1. t0 = X1 * X2
 	t0 := new(big.Int).Mul(x1, x2)
@@ -160,7 +161,7 @@ func (sc StarkCurve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) {
 	z3.Mod(z3, sc.P)
 
 	// 13. X3 = b3 * Z1 (skipped, Z1 = 1)
-	x3 := new(big.Int).Set(b3)
+	x3 := new(big.Int).Set(Curve.B3)
 
 	// 14. Z3 = X3 + Z3
 	z3.Add(x3, z3)
@@ -190,7 +191,7 @@ func (sc StarkCurve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) {
 	t2 := new(big.Int).Set(sc.Alpha)
 
 	// 21. t4 = b3 * t4
-	t4.Mul(b3, t4)
+	t4.Mul(Curve.B3, t4)
 	t4.Mod(t4, sc.P)
 
 	// 22. t1 = t1 + t2
@@ -250,9 +251,6 @@ func (sc StarkCurve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) {
 // This implements Algorithm 3 of 2015 Renes–Costello–Batina "Complete addition formulas for prime order elliptic curves"
 // (ref: https://eprint.iacr.org/2015/1060.pdf)
 func (sc StarkCurve) Double(x1, y1 *big.Int) (x_out, y_out *big.Int) {
-	b3 := new(big.Int).Mul(sc.B, big.NewInt(3))
-	b3.Mod(b3, sc.P)
-
 	// 1. t0 = X * X
 	t0 := new(big.Int).Mul(x1, x1)
 	t0.Mod(t0, sc.P)
@@ -284,7 +282,7 @@ func (sc StarkCurve) Double(x1, y1 *big.Int) (x_out, y_out *big.Int) {
 	x3.Mod(x3, sc.P)
 
 	// 9. Y3 = b3 * t2
-	y3 := new(big.Int).Mul(b3, t2)
+	y3 := new(big.Int).Mul(Curve.B3, t2)
 	y3.Mod(y3, sc.P)
 
 	// 10. Y3 = X3 + Y3
@@ -308,7 +306,7 @@ func (sc StarkCurve) Double(x1, y1 *big.Int) (x_out, y_out *big.Int) {
 	x3.Mod(x3, sc.P)
 
 	// 15. Z3 = b3 * Z3
-	z3.Mul(b3, z3)
+	z3.Mul(Curve.B3, z3)
 	z3.Mod(z3, sc.P)
 
 	// 16. t2 = a * t2
