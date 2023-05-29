@@ -95,12 +95,14 @@ func init() {
 // Gets two points on an elliptic curve mod p and returns their sum.
 // Assumes affine form (x, y) is spread (x1 *big.Int, y1 *big.Int)
 //
-// (ref: https://github.com/starkware-libs/cairo-lang/blob/master/src/starkware/crypto/starkware/crypto/signature/math_utils.py)
+// This implements Algorithm 2 of 2015 Renes–Costello–Batina "Complete addition formulas for prime order elliptic curves"
+// (ref: https://eprint.iacr.org/2015/1060.pdf)
 func (sc StarkCurve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) {
 	// As elliptic curves form a group, there is an additive identity that is the equivalent of 0
 	// If 𝑃=0 or 𝑄=0, then 𝑃+𝑄=𝑄 or 𝑃+𝑄=𝑃, respectively
 	// NOTICE: the EC multiplication algorithm is using using `StarkCurve.rewriteScalar` trick
 	//   to avoid this condition and provide constant-time execution.
+
 	if len(x1.Bits()) == 0 && len(y1.Bits()) == 0 {
 		return x2, y2
 	}
@@ -108,23 +110,138 @@ func (sc StarkCurve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) {
 		return x1, y1
 	}
 
-	yDelta := new(big.Int).Sub(y1, y2)
-	xDelta := new(big.Int).Sub(x1, x2)
+	b3 := new(big.Int).Mul(sc.B, big.NewInt(3))
+	b3.Mod(b3, sc.P)
 
-	m := DivMod(yDelta, xDelta, sc.P)
+	// 1. t0 = X1 * X2
+	t0 := new(big.Int).Mul(x1, x2)
+	t0.Mod(t0, sc.P)
 
-	xm := new(big.Int).Mul(m, m)
+	// 2. t1 = Y1 * Y2
+	t1 := new(big.Int).Mul(y1, y2)
+	t1.Mod(t1, sc.P)
 
-	x = new(big.Int).Sub(xm, x1)
-	x = x.Sub(x, x2)
-	x = x.Mod(x, sc.P)
+	// 3. t3 = X2 + Y2
+	t3 := new(big.Int).Add(x2, y2)
+	t3.Mod(t3, sc.P)
 
-	y = new(big.Int).Sub(x1, x)
-	y = y.Mul(m, y)
-	y = y.Sub(y, y1)
-	y = y.Mod(y, sc.P)
+	// 4. t4 = X1 + Y1
+	t4 := new(big.Int).Add(x1, y1)
+	t4.Mod(t4, sc.P)
 
-	return x, y
+	// 5. t3 = t3 * t4
+	t3.Mul(t3, t4)
+	t3.Mod(t3, sc.P)
+
+	// 6. t4 = t0 + t1
+	t4.Add(t0, t1)
+	t4.Mod(t4, sc.P)
+
+	// 7. t3 = t3 - t4
+	t3.Sub(t3, t4)
+	t3.Mod(t3, sc.P)
+
+	// 8. t4 = X2 * Z1 (skipped, Z1 = 1)
+	t4.Set(x2)
+
+	// 9. t4 = t4 + X1
+	t4.Add(t4, x1)
+	t4.Mod(t4, sc.P)
+
+	// 10. t5 = Y2 * Z1 (skipped, Z1 = 1)
+	t5 := new(big.Int).Set(y2)
+
+	// 11. t5 = t5 + Y1
+	t5.Add(t5, y1)
+	t5.Mod(t5, sc.P)
+
+	// 12. Z3 = a * t4
+	z3 := new(big.Int).Mul(sc.Alpha, t4)
+	z3.Mod(z3, sc.P)
+
+	// 13. X3 = b3 * Z1 (skipped, Z1 = 1)
+	x3 := new(big.Int).Set(b3)
+
+	// 14. Z3 = X3 + Z3
+	z3.Add(x3, z3)
+	z3.Mod(z3, sc.P)
+
+	// 15. X3 = t1 - Z3
+	x3.Sub(t1, z3)
+	x3.Mod(x3, sc.P)
+
+	// 16. Z3 = t1 + Z3
+	z3.Add(t1, z3)
+	z3.Mod(z3, sc.P)
+
+	// 17. Y3 = X3 * Z3
+	y3 := new(big.Int).Mul(x3, z3)
+	y3.Mod(y3, sc.P)
+
+	// 18. t1 = t0 + t0
+	t1.Add(t0, t0)
+	t1.Mod(t1, sc.P)
+
+	// 19. t1 = t1 + t0
+	t1.Add(t1, t0)
+	t1.Mod(t1, sc.P)
+
+	// 20. t2 = a * Z1 (skipped, Z1 = 1)
+	t2 := new(big.Int).Set(sc.Alpha)
+
+	// 21. t4 = b3 * t4
+	t4.Mul(b3, t4)
+	t4.Mod(t4, sc.P)
+
+	// 22. t1 = t1 + t2
+	t1.Add(t1, t2)
+	t1.Mod(t1, sc.P)
+
+	// 23. t2 = t0 - t2
+	t2.Sub(t0, t2)
+	t2.Mod(t2, sc.P)
+
+	// 24. t2 = a * t2
+	t2.Mul(sc.Alpha, t2)
+
+	// 25. t4 = t4 + t2
+	t4.Add(t4, t2)
+	t4.Mod(t4, sc.P)
+
+	// 26. t0 = t1 * t4
+	t0.Mul(t1, t4)
+	t0.Mod(t0, sc.P)
+
+	// 27. Y3 = Y3 + t0
+	y3.Add(y3, t0)
+	y3.Mod(y3, sc.P)
+
+	// 28. t0 = t5 * t4
+	t0.Mul(t5, t4)
+	t0.Mod(t0, sc.P)
+
+	// 29. X3 = t3 * X3
+	x3.Mul(t3, x3)
+	x3.Mod(x3, sc.P)
+
+	// 30. X3 = X3 - t0
+	x3.Sub(x3, t0)
+	x3.Mod(x3, sc.P)
+
+	// 31. t0 = t3 * t1
+	t0.Mul(t3, t1)
+	t0.Mod(t0, sc.P)
+
+	// 32. Z3 = t5 * Z3
+	z3.Mul(t5, z3)
+	z3.Mod(z3, sc.P)
+
+	// 33. Z3 = Z3 + t0
+	z3.Add(z3, t0)
+	z3.Mod(z3, sc.P)
+
+	// Convert to affine point
+	return DivMod(x3, z3, sc.P), DivMod(y3, z3, sc.P)
 }
 
 // Doubles a point on an elliptic curve with the equation y^2 = x^3 + alpha*x + beta mod p.
