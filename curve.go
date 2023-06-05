@@ -102,16 +102,21 @@ func init() {
 // This implements Algorithm 2 of 2015 Renes–Costello–Batina "Complete addition formulas for prime order elliptic curves"
 // (ref: https://eprint.iacr.org/2015/1060.pdf)
 func (sc StarkCurve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) {
+	x, y, z := sc.add(x1, y1, big.NewInt(1), x2, y2, big.NewInt(1))
+	return DivMod(x, z, sc.P), DivMod(y, z, sc.P)
+}
+
+func (sc StarkCurve) add(x1, y1, z1, x2, y2, z2 *big.Int) (x, y, z *big.Int) {
 	// As elliptic curves form a group, there is an additive identity that is the equivalent of 0
 	// If 𝑃=0 or 𝑄=0, then 𝑃+𝑄=𝑄 or 𝑃+𝑄=𝑃, respectively
 	// NOTICE: the EC multiplication algorithm is using using `StarkCurve.rewriteScalar` trick
 	//   to avoid this condition and provide constant-time execution.
 
-	if len(x1.Bits()) == 0 && len(y1.Bits()) == 0 {
-		return x2, y2
+	if (len(x1.Bits()) == 0 && len(y1.Bits()) == 0) || len(z1.Bits()) == 0 {
+		return x2, y2, z2
 	}
-	if len(x2.Bits()) == 0 && len(y2.Bits()) == 0 {
-		return x1, y1
+	if (len(x2.Bits()) == 0 && len(y2.Bits()) == 0) || len(z2.Bits()) == 0 {
+		return x1, y1, z1
 	}
 
 	// 1. t0 = X1 * X2
@@ -142,15 +147,17 @@ func (sc StarkCurve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) {
 	t3.Sub(t3, t4)
 	t3.Mod(t3, sc.P)
 
-	// 8. t4 = X2 * Z1 (skipped, Z1 = 1)
-	t4.Set(x2)
+	// 8. t4 = X2 * Z1
+	t4.Mul(x2, z1)
+	t4.Mod(t4, sc.P)
 
 	// 9. t4 = t4 + X1
 	t4.Add(t4, x1)
 	t4.Mod(t4, sc.P)
 
-	// 10. t5 = Y2 * Z1 (skipped, Z1 = 1)
-	t5 := new(big.Int).Set(y2)
+	// 10. t5 = Y2 * Z1
+	t5 := new(big.Int).Mul(y2, z1)
+	t5.Mod(t5, sc.P)
 
 	// 11. t5 = t5 + Y1
 	t5.Add(t5, y1)
@@ -160,8 +167,9 @@ func (sc StarkCurve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) {
 	z3 := new(big.Int).Mul(sc.Alpha, t4)
 	z3.Mod(z3, sc.P)
 
-	// 13. X3 = b3 * Z1 (skipped, Z1 = 1)
-	x3 := new(big.Int).Set(Curve.B3)
+	// 13. X3 = b3 * Z1
+	x3 := new(big.Int).Mul(Curve.B3, z1)
+	x3.Mod(x3, sc.P)
 
 	// 14. Z3 = X3 + Z3
 	z3.Add(x3, z3)
@@ -187,8 +195,9 @@ func (sc StarkCurve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) {
 	t1.Add(t1, t0)
 	t1.Mod(t1, sc.P)
 
-	// 20. t2 = a * Z1 (skipped, Z1 = 1)
-	t2 := new(big.Int).Set(sc.Alpha)
+	// 20. t2 = a * Z1
+	t2 := new(big.Int).Mul(sc.Alpha, z1)
+	t2.Mod(t2, sc.P)
 
 	// 21. t4 = b3 * t4
 	t4.Mul(Curve.B3, t4)
@@ -204,6 +213,7 @@ func (sc StarkCurve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) {
 
 	// 24. t2 = a * t2
 	t2.Mul(sc.Alpha, t2)
+	t2.Mod(t2, sc.P)
 
 	// 25. t4 = t4 + t2
 	t4.Add(t4, t2)
@@ -241,8 +251,7 @@ func (sc StarkCurve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) {
 	z3.Add(z3, t0)
 	z3.Mod(z3, sc.P)
 
-	// Convert to affine point
-	return DivMod(x3, z3, sc.P), DivMod(y3, z3, sc.P)
+	return x3, y3, z3
 }
 
 // Doubles a point on an elliptic curve with the equation y^2 = x^3 + alpha*x + beta mod p.
@@ -251,6 +260,11 @@ func (sc StarkCurve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) {
 // This implements Algorithm 3 of 2015 Renes–Costello–Batina "Complete addition formulas for prime order elliptic curves"
 // (ref: https://eprint.iacr.org/2015/1060.pdf)
 func (sc StarkCurve) Double(x1, y1 *big.Int) (x_out, y_out *big.Int) {
+	x, y, z := sc.double(x1, y1, big.NewInt(1))
+	return DivMod(x, z, sc.P), DivMod(y, z, sc.P)
+}
+
+func (sc StarkCurve) double(x1, y1, z1 *big.Int) (x_out, y_out, z_out *big.Int) {
 	// 1. t0 = X * X
 	t0 := new(big.Int).Mul(x1, x1)
 	t0.Mod(t0, sc.P)
@@ -259,8 +273,9 @@ func (sc StarkCurve) Double(x1, y1 *big.Int) (x_out, y_out *big.Int) {
 	t1 := new(big.Int).Mul(y1, y1)
 	t1.Mod(t1, sc.P)
 
-	// 3. t2 = Z * Z (skipped, Z = 1)
-	t2 := big.NewInt(1)
+	// 3. t2 = Z * Z
+	t2 := new(big.Int).Mul(z1, z1)
+	t2.Mod(t2, sc.P)
 
 	// 4. t3 = X * Y
 	t3 := new(big.Int).Mul(x1, y1)
@@ -270,8 +285,9 @@ func (sc StarkCurve) Double(x1, y1 *big.Int) (x_out, y_out *big.Int) {
 	t3.Add(t3, t3)
 	t3.Mod(t3, sc.P)
 
-	// 6. Z3 = X * Z (skipped, Z = 1)
-	z3 := new(big.Int).Set(x1)
+	// 6. Z3 = X * Z
+	z3 := new(big.Int).Mul(x1, z1)
+	z3.Mod(z3, sc.P)
 
 	// 7. Z3 = Z3 + Z3
 	z3.Add(z3, z3)
@@ -345,8 +361,9 @@ func (sc StarkCurve) Double(x1, y1 *big.Int) (x_out, y_out *big.Int) {
 	y3.Add(y3, t0)
 	y3.Mod(y3, sc.P)
 
-	// 25. t2 = Y * Z (skipped, Z = 1)
-	t2.Set(y1)
+	// 25. t2 = Y * Z
+	t2.Mul(y1, z1)
+	t2.Mod(t2, sc.P)
 
 	// 26. t2 = t2 + t2
 	t2.Add(t2, t2)
@@ -372,8 +389,7 @@ func (sc StarkCurve) Double(x1, y1 *big.Int) (x_out, y_out *big.Int) {
 	z3.Add(z3, z3)
 	z3.Mod(z3, sc.P)
 
-	// Convert to affine point
-	return DivMod(x3, z3, sc.P), DivMod(y3, z3, sc.P)
+	return x3, y3, z3
 }
 
 func (sc StarkCurve) ScalarMult(x1, y1 *big.Int, k []byte) (x, y *big.Int) {
