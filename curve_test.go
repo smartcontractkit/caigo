@@ -222,6 +222,22 @@ func TestGeneral_Add2(t *testing.T) {
 	}
 }
 
+func TestMultiplications(t *testing.T) {
+	Gx, Gy := Curve.EcGenX, Curve.EcGenY
+	for i := 1; i < 100; i++ {
+		K := big.NewInt(int64(i))
+		K.Sub(Curve.Params().N, K)
+		pubx, puby := Curve.EcMult(K, Gx, Gy)
+		orig_kx, orig_ky := Curve.ecMult_DoubleAndAdd(K, Gx, Gy)
+		if pubx.Cmp(orig_kx) != 0 {
+			t.Errorf("ResX %v does not == expected %v\n", pubx, orig_kx)
+		}
+		if puby.Cmp(orig_ky) != 0 {
+			t.Errorf("ResY %v does not == expected %v\n", puby, orig_ky)
+		}
+	}
+}
+
 type ecMultOption struct {
 	algo   string
 	fn     EcMultiFn
