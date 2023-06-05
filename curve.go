@@ -481,34 +481,38 @@ func (sc StarkCurve) MimicEcMultAir(mout, x1, y1, x2, y2 *big.Int) (x *big.Int, 
 // (ref: https://www.semanticscholar.org/paper/Elliptic-Curves-and-Side-Channel-Analysis-Joye/7fc91d3684f1ab63b97d125161daf57af60f2ad9/figure/1)
 // (ref: https://cosade.telecom-paristech.fr/presentations/s2_p2.pdf)
 func (sc StarkCurve) ecMult_DoubleAndAlwaysAdd(m, x1, y1 *big.Int) (x, y *big.Int) {
-	var _ecMult = func(m, x1, y1 *big.Int) (x, y *big.Int) {
+	var _ecMult = func(m, x1, y1, z1 *big.Int) (x, y, z *big.Int) {
 		// Two-index table initialization, Q[0] <- P
 		q := [2]struct {
 			x *big.Int
 			y *big.Int
+			z *big.Int
 		}{
 			{
 				x: x1,
 				y: y1,
+				z: z1,
 			},
 			{
 				x: nil,
 				y: nil,
+				z: nil,
 			},
 		}
 
 		// Run the algorithm, expects the most-significant bit is 1
 		for i := sc.N.BitLen() - 2; i >= 0; i-- {
-			q[0].x, q[0].y = sc.Double(q[0].x, q[0].y)      // Q[0] <- 2Q[0]
-			q[1].x, q[1].y = sc.Add(q[0].x, q[0].y, x1, y1) // Q[1] <- Q[0] + P
-			b := m.Bit(i)                                   // b    <- bit at position i
-			q[0].x, q[0].y = q[b].x, q[b].y                 // Q[0] <- Q[b]
+			q[0].x, q[0].y, q[0].z = sc.double(q[0].x, q[0].y, q[0].z)          // Q[0] <- 2Q[0]
+			q[1].x, q[1].y, q[1].z = sc.add(q[0].x, q[0].y, q[0].z, x1, y1, z1) // Q[1] <- Q[0] + P
+			b := m.Bit(i)                                                       // b    <- bit at position i
+			q[0].x, q[0].y, q[0].z = q[b].x, q[b].y, q[b].z                     // Q[0] <- Q[b]
 		}
 
-		return q[0].x, q[0].y
+		return q[0].x, q[0].y, q[0].z
 	}
 
-	return _ecMult(sc.rewriteScalar(m), x1, y1)
+	xOut, yOut, zOut := _ecMult(sc.rewriteScalar(m), x1, y1, big.NewInt(1))
+	return DivMod(xOut, zOut, sc.P), DivMod(yOut, zOut, sc.P)
 }
 
 // Rewrites k into an equivalent scalar, such that the first bit (the most-significant
