@@ -100,7 +100,7 @@ func init() {
 // Assumes affine form (x, y) is spread (x1 *big.Int, y1 *big.Int)
 func (sc StarkCurve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) {
 	x, y, z := sc.add(x1, y1, big.NewInt(1), x2, y2, big.NewInt(1))
-	return DivMod(x, z, sc.P), DivMod(y, z, sc.P)
+	return toAffineForm(x, y, z, sc.P)
 }
 
 // This implements Algorithm 1 of 2015 Renes–Costello–Batina "Complete addition formulas for prime order elliptic curves"
@@ -246,7 +246,7 @@ func (sc StarkCurve) add(x1, y1, z1, x2, y2, z2 *big.Int) (x, y, z *big.Int) {
 // Assumes affine form (x, y) is spread (x1 *big.Int, y1 *big.Int)
 func (sc StarkCurve) Double(x1, y1 *big.Int) (x_out, y_out *big.Int) {
 	x, y, z := sc.double(x1, y1, big.NewInt(1))
-	return DivMod(x, z, sc.P), DivMod(y, z, sc.P)
+	return toAffineForm(x, y, z, sc.P)
 }
 
 // This implements Algorithm 3 of 2015 Renes–Costello–Batina "Complete addition formulas for prime order elliptic curves"
@@ -500,7 +500,22 @@ func (sc StarkCurve) ecMult_DoubleAndAlwaysAdd(m, x1, y1 *big.Int) (x, y *big.In
 		q[0].x, q[0].y, q[0].z = q[b].x, q[b].y, q[b].z                     // Q[0] <- Q[b]
 	}
 
-	return DivMod(q[0].x, q[0].z, sc.P), DivMod(q[0].y, q[0].z, sc.P)
+	return toAffineForm(q[0].x, q[0].y, q[0].z, sc.P)
+}
+
+func toAffineForm(x, y, z, p *big.Int) (*big.Int, *big.Int) {
+	q := new(big.Int)
+	gx := new(big.Int)
+	gy := new(big.Int)
+	q.GCD(gx, gy, z, p)
+
+	xOut := new(big.Int).Mul(x, gx)
+	xOut.Mod(xOut, p)
+
+	yOut := new(big.Int).Mul(y, gx)
+	yOut.Mod(yOut, p)
+
+	return xOut, yOut
 }
 
 // Rewrites k into an equivalent scalar, such that the first bit (the most-significant
