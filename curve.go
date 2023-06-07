@@ -465,41 +465,41 @@ func (sc StarkCurve) MimicEcMultAir(mout, x1, y1, x2, y2 *big.Int) (x *big.Int, 
 // Multiplies by m a point on the elliptic curve with equation y^2 = x^3 + alpha*x + beta mod p.
 // Assumes affine form (x, y) is spread (x1 *big.Int, y1 *big.Int) and that 0 < m < order(point).
 //
+// (ref: https://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.394.3037&rep=rep1&type=pdf
+//	algorithm 5.7 "SPA-resistant left-to-right binary point multiplication")
 // (ref: https://www.semanticscholar.org/paper/Elliptic-Curves-and-Side-Channel-Analysis-Joye/7fc91d3684f1ab63b97d125161daf57af60f2ad9/figure/1)
 // (ref: https://cosade.telecom-paristech.fr/presentations/s2_p2.pdf)
 func (sc StarkCurve) ecMult_DoubleAndAlwaysAdd(m, x1, y1 *big.Int) (x, y *big.Int) {
-	var _ecMult = func(m, x1, y1, z1 *big.Int) (x, y, z *big.Int) {
-		// Two-index table initialization, Q[0] <- P
-		q := [2]struct {
-			x *big.Int
-			y *big.Int
-			z *big.Int
-		}{
-			{
-				x: x1,
-				y: y1,
-				z: z1,
-			},
-			{
-				x: nil,
-				y: nil,
-				z: nil,
-			},
-		}
+	z1 := big.NewInt(1)
 
-		// Run the algorithm, expects the most-significant bit is 1
-		for i := sc.N.BitLen() - 2; i >= 0; i-- {
-			q[0].x, q[0].y, q[0].z = sc.double(q[0].x, q[0].y, q[0].z)          // Q[0] <- 2Q[0]
-			q[1].x, q[1].y, q[1].z = sc.add(q[0].x, q[0].y, q[0].z, x1, y1, z1) // Q[1] <- Q[0] + P
-			b := m.Bit(i)                                                       // b    <- bit at position i
-			q[0].x, q[0].y, q[0].z = q[b].x, q[b].y, q[b].z                     // Q[0] <- Q[b]
-		}
-
-		return q[0].x, q[0].y, q[0].z
+	// Two-index table initialization, Q[0] <- P
+	q := [2]struct {
+		x *big.Int
+		y *big.Int
+		z *big.Int
+	}{
+		{
+			x: x1,
+			y: y1,
+			z: z1,
+		},
+		{
+			x: nil,
+			y: nil,
+			z: nil,
+		},
 	}
 
-	xOut, yOut, zOut := _ecMult(sc.rewriteScalar(m), x1, y1, big.NewInt(1))
-	return DivMod(xOut, zOut, sc.P), DivMod(yOut, zOut, sc.P)
+	// We run the loop `len - 2` times instead of `len - 1` as shown in the algorithm because
+	// we begin `q` initialized with `P` instead of with infinity.
+	for i := m.BitLen() - 2; i >= 0; i-- {
+		q[0].x, q[0].y, q[0].z = sc.double(q[0].x, q[0].y, q[0].z)          // Q[0] <- 2Q[0]
+		q[1].x, q[1].y, q[1].z = sc.add(q[0].x, q[0].y, q[0].z, x1, y1, z1) // Q[1] <- Q[0] + P
+		b := m.Bit(i)                                                       // b    <- bit at position i
+		q[0].x, q[0].y, q[0].z = q[b].x, q[b].y, q[b].z                     // Q[0] <- Q[b]
+	}
+
+	return DivMod(q[0].x, q[0].z, sc.P), DivMod(q[0].y, q[0].z, sc.P)
 }
 
 // Rewrites k into an equivalent scalar, such that the first bit (the most-significant
@@ -510,9 +510,10 @@ func (sc StarkCurve) ecMult_DoubleAndAlwaysAdd(m, x1, y1 *big.Int) (x, y *big.In
 // the group order, k mod q == K mod q.
 //
 // Notice: The EC multiplication algorithms are typically presented as starting with the state (O, P0),
-//   where O is the identity element (or neutral point) of the curve. However, the neutral point is at infinity,
-//   which causes problems for some formulas (non constant-time execution for the naive implementation).
-//   The ladder then starts after the first step, when the state no longer contains the neutral point.
+//	where O is the identity element (or neutral point) of the curve. However, the neutral point is at infinity,
+//	which causes problems for some formulas (non constant-time execution for the naive implementation).
+//	The ladder then starts after the first step, when the state no longer contains the neutral point.
+//
 // (ref: https://www.shiftleft.org/papers/ladder/ladder-tches.pdf)
 func (sc StarkCurve) rewriteScalar(k *big.Int) *big.Int {
 	size := new(big.Int).Lsh(big.NewInt(1), uint(sc.BitSize)) // 2ˆn
