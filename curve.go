@@ -470,6 +470,7 @@ func (sc StarkCurve) MimicEcMultAir(mout, x1, y1, x2, y2 *big.Int) (x *big.Int, 
 // (ref: https://www.semanticscholar.org/paper/Elliptic-Curves-and-Side-Channel-Analysis-Joye/7fc91d3684f1ab63b97d125161daf57af60f2ad9/figure/1)
 // (ref: https://cosade.telecom-paristech.fr/presentations/s2_p2.pdf)
 func (sc StarkCurve) ecMult_DoubleAndAlwaysAdd(m, x1, y1 *big.Int) (x, y *big.Int) {
+	k := sc.rewriteScalar(m)
 	z1 := big.NewInt(1)
 
 	// Two-index table initialization, Q[0] <- P
@@ -492,10 +493,10 @@ func (sc StarkCurve) ecMult_DoubleAndAlwaysAdd(m, x1, y1 *big.Int) (x, y *big.In
 
 	// We run the loop `len - 2` times instead of `len - 1` as shown in the algorithm because
 	// we begin `q` initialized with `P` instead of with infinity.
-	for i := m.BitLen() - 2; i >= 0; i-- {
+	for i := k.BitLen() - 2; i >= 0; i-- {
 		q[0].x, q[0].y, q[0].z = sc.double(q[0].x, q[0].y, q[0].z)          // Q[0] <- 2Q[0]
 		q[1].x, q[1].y, q[1].z = sc.add(q[0].x, q[0].y, q[0].z, x1, y1, z1) // Q[1] <- Q[0] + P
-		b := m.Bit(i)                                                       // b    <- bit at position i
+		b := k.Bit(i)                                                       // b    <- bit at position i
 		q[0].x, q[0].y, q[0].z = q[b].x, q[b].y, q[b].z                     // Q[0] <- Q[b]
 	}
 
