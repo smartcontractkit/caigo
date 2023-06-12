@@ -386,7 +386,7 @@ func (sc StarkCurve) ScalarMult(x1, y1 *big.Int, k []byte) (x, y *big.Int) {
 }
 
 func (sc StarkCurve) ScalarBaseMult(k []byte) (x, y *big.Int) {
-	return sc.ScalarMult(sc.Gx, sc.Gy, k)
+	return sc.ScalarMult(sc.EcGenX, sc.EcGenY, k)
 }
 
 func (sc StarkCurve) IsOnCurve(x, y *big.Int) bool {
