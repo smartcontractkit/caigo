@@ -106,18 +106,6 @@ func (sc StarkCurve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) {
 // This implements Algorithm 1 of 2015 Renes–Costello–Batina "Complete addition formulas for prime order elliptic curves"
 // (ref: https://eprint.iacr.org/2015/1060.pdf)
 func (sc StarkCurve) add(x1, y1, z1, x2, y2, z2 *big.Int) (x, y, z *big.Int) {
-	// As elliptic curves form a group, there is an additive identity that is the equivalent of 0
-	// If 𝑃=0 or 𝑄=0, then 𝑃+𝑄=𝑄 or 𝑃+𝑄=𝑃, respectively
-	// NOTICE: the EC multiplication algorithm is using using `StarkCurve.rewriteScalar` trick
-	//   to avoid this condition and provide constant-time execution.
-
-	if (len(x1.Bits()) == 0 && len(y1.Bits()) == 0) || len(z1.Bits()) == 0 {
-		return x2, y2, z2
-	}
-	if (len(x2.Bits()) == 0 && len(y2.Bits()) == 0) || len(z2.Bits()) == 0 {
-		return x1, y1, z1
-	}
-
 	// 1. t0 = X1 * X2
 	t0 := new(big.Int).Mul(x1, x2)
 	t0.Mod(t0, sc.P)
