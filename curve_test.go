@@ -1,7 +1,6 @@
 package caigo
 
 import (
-	"crypto/subtle"
 	"fmt"
 	"math"
 	"math/big"
@@ -249,14 +248,6 @@ func (sc StarkCurve) ecMultOptions() []ecMultOption {
 			algo: "Double-And-Always-Add",
 			fn:   sc.EcMult, // best algo (currently used)
 		},
-		{
-			algo: "Montgomery-Ladder",
-			fn:   sc.ecMult_Montgomery,
-		},
-		{
-			algo: "Montgomery-Ladder-Lsh",
-			fn:   sc.ecMult_MontgomeryLsh,
-		},
 	}
 }
 
@@ -403,62 +394,4 @@ func (sc StarkCurve) ecMult_DoubleAndAdd(m, x1, y1 *big.Int) (x, y *big.Int) {
 	//   This algorithm is not affected, as it doesn't do a fixed number of operations,
 	//   nor directly depends on the binary representation of the scalar.
 	return _ecMult(m, x1, y1)
-}
-
-// Multiplies by m a point on the elliptic curve with equation y^2 = x^3 + alpha*x + beta mod p.
-// Assumes affine form (x, y) is spread (x1 *big.Int, y1 *big.Int) and that 0 < m < order(point).
-//
-// (ref: https://en.wikipedia.org/wiki/Elliptic_curve_point_multiplication#Montgomery_ladder)
-func (sc StarkCurve) ecMult_Montgomery(m, x1, y1 *big.Int) (x, y *big.Int) {
-	var _ecMultMontgomery = func(m, x0, y0, x1, y1 *big.Int) (x, y *big.Int) {
-		// Do constant number of operations
-		for i := sc.N.BitLen() - 1; i >= 0; i-- {
-			// Check if next bit set
-			if m.Bit(i) == 0 {
-				x1, y1 = sc.Add(x0, y0, x1, y1)
-				x0, y0 = sc.Double(x0, y0)
-			} else {
-				x0, y0 = sc.Add(x0, y0, x1, y1)
-				x1, y1 = sc.Double(x1, y1)
-			}
-		}
-		return x0, y0
-	}
-
-	return _ecMultMontgomery(sc.rewriteScalar(m), big.NewInt(0), big.NewInt(0), x1, y1)
-}
-
-// Multiplies by m a point on the elliptic curve with equation y^2 = x^3 + alpha*x + beta mod p.
-// Assumes affine form (x, y) is spread (x1 *big.Int, y1 *big.Int) and that 0 < m < order(point).
-//
-// (ref: https://en.wikipedia.org/wiki/Elliptic_curve_point_multiplication#Montgomery_ladder)
-func (sc StarkCurve) ecMult_MontgomeryLsh(m, x1, y1 *big.Int) (x, y *big.Int) {
-	var _ecMultMontgomery = func(m, x0, y0, x1, y1 *big.Int) (x, y *big.Int) {
-		// Fill a fixed 32 byte buffer (2 ** 251)
-		// NOTICE: this will take an absolute value first
-		buf := m.FillBytes(make([]byte, 32))
-
-		for i, byte := range buf {
-			for bitNum := 0; bitNum < 8; bitNum++ {
-				// Skip first 4 bits, do constant 252 operations
-				if i == 0 && bitNum < 4 {
-					byte <<= 1
-					continue
-				}
-
-				// Check if next bit set
-				if subtle.ConstantTimeByteEq(byte&0x80, 0x80) == 0 {
-					x1, y1 = sc.Add(x0, y0, x1, y1)
-					x0, y0 = sc.Double(x0, y0)
-				} else {
-					x0, y0 = sc.Add(x0, y0, x1, y1)
-					x1, y1 = sc.Double(x1, y1)
-				}
-				byte <<= 1
-			}
-		}
-		return x0, y0
-	}
-
-	return _ecMultMontgomery(sc.rewriteScalar(m), big.NewInt(0), big.NewInt(0), x1, y1)
 }
