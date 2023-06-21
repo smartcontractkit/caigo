@@ -2,10 +2,14 @@ package caigo
 
 import (
 	"fmt"
+	"math"
 	"math/big"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/smartcontractkit/caigo/types"
+	"gonum.org/v1/gonum/stat"
 )
 
 func BenchmarkPedersenHash(b *testing.B) {
@@ -131,28 +135,22 @@ func TestGeneral_Add(t *testing.T) {
 			expectedX: types.StrToBig("2573054162739002771275146649287762003525422629677678278801887452213127777391"),
 			expectedY: types.StrToBig("3086444303034188041185211625370405120551769541291810669307042006593736192813"),
 		},
-		{
-			x:         big.NewInt(1),
-			y:         big.NewInt(2),
-			expectedX: types.StrToBig("225199957243206662471193729647752088571005624230831233470296838210993906468"),
-			expectedY: types.StrToBig("190092378222341939862849656213289777723812734888226565973306202593691957981"),
-		},
 	}
 
 	for _, tt := range testAdd {
 		resX, resY := Curve.Add(Curve.Gx, Curve.Gy, tt.x, tt.y)
 		if resX.Cmp(tt.expectedX) != 0 {
-			t.Errorf("ResX %v does not == expected %v\n", resX, tt.expectedX)
+			t.Errorf("(Gx, Gy) + (%v, %v): ResX %v does not == expected %v\n", tt.x, tt.y, resX, tt.expectedX)
 
 		}
 		if resY.Cmp(tt.expectedY) != 0 {
-			t.Errorf("ResY %v does not == expected %v\n", resY, tt.expectedY)
+			t.Errorf("(Gx, Gy) + (%v, %v): ResY %v does not == expected %v\n", tt.x, tt.y, resY, tt.expectedY)
 		}
 	}
 }
 
 func TestGeneral_MultAir(t *testing.T) {
-	testMult := []struct {
+	tests := []struct {
 		r         *big.Int
 		x         *big.Int
 		y         *big.Int
@@ -168,7 +166,7 @@ func TestGeneral_MultAir(t *testing.T) {
 		},
 	}
 
-	for _, tt := range testMult {
+	for _, tt := range tests {
 		x, y, err := Curve.MimicEcMultAir(tt.r, tt.x, tt.y, Curve.Gx, Curve.Gy)
 		if err != nil {
 			t.Errorf("MultAirERR %v\n", err)
@@ -182,4 +180,218 @@ func TestGeneral_MultAir(t *testing.T) {
 			t.Errorf("ResY %v does not == expected %v\n", y, tt.expectedY)
 		}
 	}
+}
+
+func TestGeneral_Add2(t *testing.T) {
+	Gx, Gy := Curve.EcGenX, Curve.EcGenY
+	k := big.NewInt(int64(5))
+
+	Px, Py := Curve.EcMult(k, Gx, Gy)
+	if !Curve.IsOnCurve(Px, Py) {
+		t.Errorf("k*G is not on the curve")
+	}
+
+	// PInv = -P
+	PInvx, PInvy := Px, new(big.Int).Sub(Curve.Params().P, Py)
+	if !Curve.IsOnCurve(PInvx, PInvy) {
+		t.Errorf("-k*G is not on the curve")
+	}
+
+	// P + PInv = 0
+	sum_x, sum_y := Curve.Add(Px, Py, PInvx, PInvy)
+
+	// result is on curve
+	is_onCurve := Curve.IsOnCurve(sum_x, sum_y)
+	if !is_onCurve {
+		t.Errorf("sum is not on the curve")
+	}
+
+	// result is point at infinity
+	if big.NewInt(0).Cmp(sum_x) != 0 {
+		t.Errorf("sum_x is not 0")
+	}
+	if big.NewInt(0).Cmp(sum_y) != 0 {
+		t.Errorf("sum_y is not 0")
+	}
+}
+
+func TestMultiplications(t *testing.T) {
+	Gx, Gy := Curve.EcGenX, Curve.EcGenY
+	for i := 1; i < 100; i++ {
+		K := big.NewInt(int64(i))
+		K.Sub(Curve.Params().N, K)
+		pubx, puby := Curve.EcMult(K, Gx, Gy)
+		orig_kx, orig_ky := Curve.ecMult_DoubleAndAdd(K, Gx, Gy)
+		if pubx.Cmp(orig_kx) != 0 {
+			t.Errorf("ResX %v does not == expected %v\n", pubx, orig_kx)
+		}
+		if puby.Cmp(orig_ky) != 0 {
+			t.Errorf("ResY %v does not == expected %v\n", puby, orig_ky)
+		}
+	}
+}
+
+type ecMultOption struct {
+	algo   string
+	fn     EcMultiFn
+	stddev float64
+}
+
+// Get multiple ec multiplication algo options to test and benchmark
+func (sc StarkCurve) ecMultOptions() []ecMultOption {
+	return []ecMultOption{
+		{
+			algo: "Double-And-Add",
+			fn:   sc.ecMult_DoubleAndAdd, // original algo
+		},
+		{
+			algo: "Double-And-Always-Add",
+			fn:   sc.EcMult, // best algo (currently used)
+		},
+	}
+}
+
+func FuzzEcMult(f *testing.F) {
+	// Generate the scalar value k, where 0 < k < order(point)
+	var _genScalar = func(a int, b int) (k *big.Int) {
+		k = new(big.Int).Mul(big.NewInt(int64(a)), big.NewInt(int64(b)))
+		k = k.Mul(k, k).Mul(k, k) // generate moar big number
+		k = k.Abs(k)
+		k = k.Add(k, big.NewInt(1)) // edge case: avoid zero
+		k = k.Mod(k, Curve.N)
+		return
+	}
+
+	// Seed the fuzzer (examples)
+	f.Add(-12121501143923232, 142312310232324552) // negative numbers used as seeds but the resulting
+	f.Add(41289371293219038, -179566705053432322) // scalar is normalized to 0 < k < order(point)
+	f.Add(927302501143912223, 220390912389202149)
+	f.Add(874739451078007766, 868575557812948233)
+	f.Add(302150520188025637, 670505342647705232)
+	f.Add(778320444456588442, 932884823101831273)
+	f.Add(658844239552133924, 933442778319932884)
+	f.Add(494910213617956623, 976290247577832044)
+
+	f.Fuzz(func(t *testing.T, a int, b int) {
+		k := _genScalar(a, b)
+
+		var x0, y0 *big.Int
+		for _, tt := range Curve.ecMultOptions() {
+			x, y, err := Curve.privateToPoint(k, tt.fn)
+			if err != nil {
+				t.Errorf("EcMult err: %v, algo=%v\n", err, tt.algo)
+			}
+
+			// Store the initial result from the first algo and test against it
+			if x0 == nil {
+				x0 = x
+				y0 = y
+			} else if x0.Cmp(x) != 0 {
+				t.Errorf("EcMult x mismatch: %v != %v, algo=%v\n", x, x0, tt.algo)
+			} else if y0.Cmp(y) != 0 {
+				t.Errorf("EcMult y mismatch: %v != %v, algo=%v\n", y, y0, tt.algo)
+			}
+		}
+	})
+}
+
+func BenchmarkEcMultAll(b *testing.B) {
+	// Generate the scalar value k, where n number of bits are set, no trailing zeros
+	var _genScalarBits = func(n int) (k *big.Int) {
+		k = big.NewInt(1)
+		for i := 1; i < n; i++ {
+			k = k.Lsh(k, 1).Add(k, big.NewInt(1))
+		}
+		return
+	}
+
+	ecMultiBest := ecMultOption{
+		algo:   "",
+		stddev: math.MaxFloat64,
+	}
+
+	var out strings.Builder
+	for _, tt := range Curve.ecMultOptions() {
+		// test (+ time) injected ec multi fn performance via Curve.privateToPoint
+		var _test = func(k *big.Int) int64 {
+			start := time.Now()
+			Curve.privateToPoint(k, tt.fn)
+			return time.Since(start).Nanoseconds()
+		}
+
+		xs := []float64{}
+		// generate numbers with 1 to 251 bits set
+		for i := 1; i < Curve.N.BitLen(); i++ {
+			k := _genScalarBits(i)
+			b.Run(fmt.Sprintf("%s/input_bits_len/%d", tt.algo, k.BitLen()), func(b *testing.B) {
+				ns := _test(k)
+				xs = append(xs, float64(ns))
+			})
+		}
+
+		// generate numbers with 1 to 250 trailing zero bits set
+		k := _genScalarBits(Curve.N.BitLen() - 1)
+		for i := 1; i < Curve.N.BitLen()-1; i++ {
+			k.Rsh(k, uint(i)).Lsh(k, uint(i))
+			b.Run(fmt.Sprintf("%s/input_bits_len/%d#%d", tt.algo, k.BitLen(), k.TrailingZeroBits()), func(b *testing.B) {
+				ns := _test(k)
+				xs = append(xs, float64(ns))
+			})
+		}
+
+		// computes the weighted mean of the dataset.
+		// we don't have any weights (ie: all weights are 1) so we pass a nil slice.
+		mean := stat.Mean(xs, nil)
+		variance := stat.Variance(xs, nil)
+		stddev := math.Sqrt(variance)
+		// Keep track of the best one (min stddev)
+		if stddev < ecMultiBest.stddev {
+			ecMultiBest.stddev = stddev
+			ecMultiBest.algo = tt.algo
+		}
+
+		out.WriteString("-----------------------------\n")
+		out.WriteString(fmt.Sprintf("algo=       %v\n", tt.algo))
+		out.WriteString(fmt.Sprintf("stats(ns)\n"))
+		out.WriteString(fmt.Sprintf("  mean=     %v\n", mean))
+		out.WriteString(fmt.Sprintf("  variance= %v\n", variance))
+		out.WriteString(fmt.Sprintf("  std-dev=  %v\n", stddev))
+		out.WriteString("\n")
+	}
+
+	// final stats output
+	fmt.Println(out.String())
+	// assert benchmark result is as expected
+	expectedBest := "Double-And-Always-Add"
+	if ecMultiBest.algo != expectedBest {
+		b.Errorf("ecMultiBest.algo %v does not == expected %v\n", ecMultiBest.algo, expectedBest)
+	}
+}
+
+// Multiplies by m a point on the elliptic curve with equation y^2 = x^3 + alpha*x + beta mod p.
+// Assumes affine form (x, y) is spread (x1 *big.Int, y1 *big.Int) and that 0 < m < order(point).
+//
+// (ref: https://github.com/starkware-libs/cairo-lang/blob/master/src/starkware/crypto/starkware/crypto/signature/math_utils.py)
+func (sc StarkCurve) ecMult_DoubleAndAdd(m, x1, y1 *big.Int) (x, y *big.Int) {
+	var _ecMult func(m, x1, y1 *big.Int) (x, y *big.Int)
+	_ecMult = func(m, x1, y1 *big.Int) (x, y *big.Int) {
+		if m.BitLen() == 1 {
+			return x1, y1
+		}
+		mk := new(big.Int).Mod(m, big.NewInt(2))
+		if mk.Cmp(big.NewInt(0)) == 0 {
+			h := new(big.Int).Div(m, big.NewInt(2))
+			c, d := sc.Double(x1, y1)
+			return _ecMult(h, c, d)
+		}
+		n := new(big.Int).Sub(m, big.NewInt(1))
+		e, f := _ecMult(n, x1, y1)
+
+		return sc.Add(e, f, x1, y1)
+	}
+
+	// Notice: no need for scalar rewrite trick via `StarkCurve.rewriteScalar`
+	//   This algorithm is not affected, as it doesn't do a fixed number of operations,
+	//   nor directly depends on the binary representation of the scalar.
+	return _ecMult(m, x1, y1)
 }

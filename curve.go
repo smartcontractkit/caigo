@@ -29,6 +29,7 @@ type StarkCurve struct {
 	Max              *big.Int
 	Alpha            *big.Int
 	ConstantPoints   [][]*big.Int
+	B3               *big.Int
 }
 
 //go:embed pedersen_params.json
@@ -90,56 +91,280 @@ func init() {
 	Curve.Max, _ = new(big.Int).SetString("3618502788666131106986593281521497120414687020801267626233049500247285301248", 10)              // 2 ** 251
 	Curve.Alpha = big.NewInt(1)
 	Curve.BitSize = 252
+
+	Curve.B3 = new(big.Int).Mul(Curve.B, big.NewInt(3))
+	Curve.B3.Mod(Curve.B3, Curve.P)
 }
 
 // Gets two points on an elliptic curve mod p and returns their sum.
 // Assumes affine form (x, y) is spread (x1 *big.Int, y1 *big.Int)
-//
-// (ref: https://github.com/starkware-libs/cairo-lang/blob/master/src/starkware/crypto/starkware/crypto/signature/math_utils.py)
 func (sc StarkCurve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) {
-	yDelta := new(big.Int).Sub(y1, y2)
-	xDelta := new(big.Int).Sub(x1, x2)
+	x, y, z := sc.add(x1, y1, big.NewInt(1), x2, y2, big.NewInt(1))
+	return toAffineForm(x, y, z, sc.P)
+}
 
-	m := DivMod(yDelta, xDelta, sc.P)
+// This implements Algorithm 1 of 2015 Renes–Costello–Batina "Complete addition formulas for prime order elliptic curves"
+// (ref: https://eprint.iacr.org/2015/1060.pdf)
+func (sc StarkCurve) add(x1, y1, z1, x2, y2, z2 *big.Int) (x, y, z *big.Int) {
+	// 1. t0 = X1 * X2
+	t0 := new(big.Int).Mul(x1, x2)
+	t0.Mod(t0, sc.P)
+	// 2. t1 = Y1 * Y2
+	t1 := new(big.Int).Mul(y1, y2)
+	t1.Mod(t1, sc.P)
+	// 3. t2 = Z1*Z2
+	t2 := new(big.Int).Mul(z1, z2)
+	t2.Mod(t2, sc.P)
+	// 4. t3 = X1+Y1
+	t3 := new(big.Int).Add(x1, y1)
+	t3.Mod(t3, sc.P)
+	// 5. t4 = X2+Y2
+	t4 := new(big.Int).Add(x2, y2)
+	t4.Mod(t4, sc.P)
+	// 6. t3 = t3*t4
+	t3.Mul(t3, t4)
+	t3.Mod(t3, sc.P)
+	// 7. t4 = t0+t1
+	t4.Add(t0, t1)
+	t4.Mod(t4, sc.P)
+	// 8. t3 = t3-t4
+	t3.Sub(t3, t4)
+	t3.Mod(t3, sc.P)
+	// 9. t4 = X1+Z1
+	t4.Add(x1, z1)
+	t4.Mod(t4, sc.P)
+	// 10. t5 = X2+Z2
+	t5 := new(big.Int).Add(x2, z2)
+	t5.Mod(t5, sc.P)
+	// 11. t4 = t4*t5
+	t4.Mul(t4, t5)
+	t4.Mod(t4, sc.P)
+	// 12. t5 = t0+t2
+	t5.Add(t0, t2)
+	t5.Mod(t5, sc.P)
+	// 13. t4 = t4-t5
+	t4.Sub(t4, t5)
+	t4.Mod(t4, sc.P)
+	// 14. t5 = Y1+Z1
+	t5.Add(y1, z1)
+	t5.Mod(t5, sc.P)
+	// 15. X3 = Y2+Z2
+	x3 := new(big.Int).Add(y2, z2)
+	x3.Mod(x3, sc.P)
+	// 16. t5 = t5*X3
+	t5.Mul(t5, x3)
+	t5.Mod(t5, sc.P)
+	// 17. X3 = t1+t2
+	x3.Add(t1, t2)
+	x3.Mod(x3, sc.P)
+	// 18. t5 = t5-X3
+	t5.Sub(t5, x3)
+	t5.Mod(t5, sc.P)
+	// 19. Z3 = a*t4
+	z3 := new(big.Int).Mul(sc.Alpha, t4)
+	z3.Mod(z3, sc.P)
+	// 20. X3 = b3*t2
+	x3.Mul(sc.B3, t2)
+	x3.Mod(x3, sc.P)
+	// 21. Z3 = X3+Z3
+	z3.Add(x3, z3)
+	z3.Mod(z3, sc.P)
+	// 22. X3 = t1-Z3
+	x3.Sub(t1, z3)
+	x3.Mod(x3, sc.P)
+	// 23. Z3 = t1+Z3
+	z3.Add(t1, z3)
+	z3.Mod(z3, sc.P)
+	// 24. Y3 = X3*Z3
+	y3 := new(big.Int).Mul(x3, z3)
+	y3.Mod(y3, sc.P)
+	// 25. t1 = t0+t0
+	t1.Add(t0, t0)
+	t1.Mod(t1, sc.P)
+	// 26. t1 = t1+t0
+	t1.Add(t1, t0)
+	t1.Mod(t1, sc.P)
+	// 27. t2 = a*t2
+	t2.Mul(sc.Alpha, t2)
+	t2.Mod(t2, sc.P)
+	// 28. t4 = b3*t4
+	t4.Mul(sc.B3, t4)
+	t4.Mod(t4, sc.P)
+	// 29. t1 = t1+t2
+	t1.Add(t1, t2)
+	t1.Mod(t1, sc.P)
+	// 30. t2 = t0-t2
+	t2.Sub(t0, t2)
+	t2.Mod(t2, sc.P)
+	// 31. t2 = a*t2
+	t2.Mul(sc.Alpha, t2)
+	t2.Mod(t2, sc.P)
+	// 32. t4 = t4+t2
+	t4.Add(t4, t2)
+	t4.Mod(t4, sc.P)
+	// 33. t0 = t1*t4
+	t0.Mul(t1, t4)
+	t0.Mod(t0, sc.P)
+	// 34. Y3 = Y3+t0
+	y3.Add(y3, t0)
+	y3.Mod(y3, sc.P)
+	// 35. t0 = t5*t4
+	t0.Mul(t5, t4)
+	t0.Mod(t0, sc.P)
+	// 36. X3 = t3*X3
+	x3.Mul(t3, x3)
+	x3.Mod(x3, sc.P)
+	// 37. X3 = X3-t0
+	x3.Sub(x3, t0)
+	x3.Mod(x3, sc.P)
+	// 38. t0 = t3*t1
+	t0.Mul(t3, t1)
+	t0.Mod(t0, sc.P)
+	// 39. Z3 = t5*Z3
+	z3.Mul(t5, z3)
+	z3.Mod(z3, sc.P)
+	// 40. Z3 = Z3+t0
+	z3.Add(z3, t0)
+	z3.Mod(z3, sc.P)
 
-	xm := new(big.Int).Mul(m, m)
-
-	x = new(big.Int).Sub(xm, x1)
-	x = x.Sub(x, x2)
-	x = x.Mod(x, sc.P)
-
-	y = new(big.Int).Sub(x1, x)
-	y = y.Mul(m, y)
-	y = y.Sub(y, y1)
-	y = y.Mod(y, sc.P)
-
-	return x, y
+	return x3, y3, z3
 }
 
 // Doubles a point on an elliptic curve with the equation y^2 = x^3 + alpha*x + beta mod p.
 // Assumes affine form (x, y) is spread (x1 *big.Int, y1 *big.Int)
-//
-// (ref: https://github.com/starkware-libs/cairo-lang/blob/master/src/starkware/crypto/starkware/crypto/signature/math_utils.py)
-func (sc StarkCurve) Double(x1, y1 *big.Int) (x, y *big.Int) {
-	xin := new(big.Int).Mul(big.NewInt(3), x1)
-	xin = xin.Mul(xin, x1)
-	xin = xin.Add(xin, sc.Alpha)
+func (sc StarkCurve) Double(x1, y1 *big.Int) (x_out, y_out *big.Int) {
+	x, y, z := sc.double(x1, y1, big.NewInt(1))
+	return toAffineForm(x, y, z, sc.P)
+}
 
-	yin := new(big.Int).Mul(y1, big.NewInt(2))
+// This implements Algorithm 3 of 2015 Renes–Costello–Batina "Complete addition formulas for prime order elliptic curves"
+// (ref: https://eprint.iacr.org/2015/1060.pdf)
+func (sc StarkCurve) double(x1, y1, z1 *big.Int) (x_out, y_out, z_out *big.Int) {
+	// 1. t0 = X * X
+	t0 := new(big.Int).Mul(x1, x1)
+	t0.Mod(t0, sc.P)
 
-	m := DivMod(xin, yin, sc.P)
+	// 2. t1 = Y * Y
+	t1 := new(big.Int).Mul(y1, y1)
+	t1.Mod(t1, sc.P)
 
-	xout := new(big.Int).Mul(m, m)
-	xmed := new(big.Int).Mul(big.NewInt(2), x1)
-	xout = xout.Sub(xout, xmed)
-	xout = xout.Mod(xout, sc.P)
+	// 3. t2 = Z * Z
+	t2 := new(big.Int).Mul(z1, z1)
+	t2.Mod(t2, sc.P)
 
-	yout := new(big.Int).Sub(x1, xout)
-	yout = yout.Mul(m, yout)
-	yout = yout.Sub(yout, y1)
-	yout = yout.Mod(yout, sc.P)
+	// 4. t3 = X * Y
+	t3 := new(big.Int).Mul(x1, y1)
+	t3.Mod(t3, sc.P)
 
-	return xout, yout
+	// 5. t3 = t3 + t3
+	t3.Add(t3, t3)
+	t3.Mod(t3, sc.P)
+
+	// 6. Z3 = X * Z
+	z3 := new(big.Int).Mul(x1, z1)
+	z3.Mod(z3, sc.P)
+
+	// 7. Z3 = Z3 + Z3
+	z3.Add(z3, z3)
+	z3.Mod(z3, sc.P)
+
+	// 8. X3 = a * Z3
+	x3 := new(big.Int).Mul(sc.Alpha, z3)
+	x3.Mod(x3, sc.P)
+
+	// 9. Y3 = b3 * t2
+	y3 := new(big.Int).Mul(Curve.B3, t2)
+	y3.Mod(y3, sc.P)
+
+	// 10. Y3 = X3 + Y3
+	y3.Add(x3, y3)
+	y3.Mod(y3, sc.P)
+
+	// 11. X3 = t1 - Y3
+	x3.Sub(t1, y3)
+	x3.Mod(x3, sc.P)
+
+	// 12. Y3 = t1 + Y3
+	y3.Add(t1, y3)
+	y3.Mod(y3, sc.P)
+
+	// 13. Y3 = X3 * Y3
+	y3.Mul(x3, y3)
+	y3.Mod(y3, sc.P)
+
+	// 14. X3 = t3 * X3
+	x3.Mul(t3, x3)
+	x3.Mod(x3, sc.P)
+
+	// 15. Z3 = b3 * Z3
+	z3.Mul(Curve.B3, z3)
+	z3.Mod(z3, sc.P)
+
+	// 16. t2 = a * t2
+	t2.Mul(sc.Alpha, t2)
+	t2.Mod(t2, sc.P)
+
+	// 17. t3 = t0 - t2
+	t3.Sub(t0, t2)
+	t3.Mod(t3, sc.P)
+
+	// 18. t3 = a * t3
+	t3.Mul(sc.Alpha, t3)
+	t3.Mod(t3, sc.P)
+
+	// 19. t3 = t3 + z3
+	t3.Add(t3, z3)
+	t3.Mod(t3, sc.P)
+
+	// 20. z3 = t0 + t0
+	z3.Add(t0, t0)
+	z3.Mod(z3, sc.P)
+
+	// 21. t0 = Z3 + t0
+	t0.Add(z3, t0)
+	t0.Mod(t0, sc.P)
+
+	// 22. t0 = t0 + t2
+	t0.Add(t0, t2)
+	t0.Mod(t0, sc.P)
+
+	// 23. t0 = t0 * t3
+	t0.Mul(t0, t3)
+	t0.Mod(t0, sc.P)
+
+	// 24. Y3 = Y3 + t0
+	y3.Add(y3, t0)
+	y3.Mod(y3, sc.P)
+
+	// 25. t2 = Y * Z
+	t2.Mul(y1, z1)
+	t2.Mod(t2, sc.P)
+
+	// 26. t2 = t2 + t2
+	t2.Add(t2, t2)
+	t2.Mod(t2, sc.P)
+
+	// 27. t0 = t2 * t3
+	t0.Mul(t2, t3)
+	t0.Mod(t0, sc.P)
+
+	// 28. X3 = X3 - t0
+	x3.Sub(x3, t0)
+	x3.Mod(x3, sc.P)
+
+	// 29. Z3 = t2 * t1
+	z3.Mul(t2, t1)
+	z3.Mod(z3, sc.P)
+
+	// 30. Z3 = Z3 + Z3
+	z3.Add(z3, z3)
+	z3.Mod(z3, sc.P)
+
+	// 31. Z3 = Z3 + Z3
+	z3.Add(z3, z3)
+	z3.Mod(z3, sc.P)
+
+	return x3, y3, z3
 }
 
 func (sc StarkCurve) ScalarMult(x1, y1 *big.Int, k []byte) (x, y *big.Int) {
@@ -149,10 +374,15 @@ func (sc StarkCurve) ScalarMult(x1, y1 *big.Int, k []byte) (x, y *big.Int) {
 }
 
 func (sc StarkCurve) ScalarBaseMult(k []byte) (x, y *big.Int) {
-	return sc.ScalarMult(sc.Gx, sc.Gy, k)
+	return sc.ScalarMult(sc.EcGenX, sc.EcGenY, k)
 }
 
 func (sc StarkCurve) IsOnCurve(x, y *big.Int) bool {
+	// Infinity is considered part of the curve
+	if len(x.Bits()) == 0 && len(y.Bits()) == 0 {
+		return true
+	}
+
 	left := new(big.Int).Mul(y, y)
 	left = left.Mod(left, sc.P)
 
@@ -166,11 +396,7 @@ func (sc StarkCurve) IsOnCurve(x, y *big.Int) bool {
 	right = right.Add(right, sc.B)
 	right = right.Mod(right, sc.P)
 
-	if left.Cmp(right) == 0 {
-		return true
-	} else {
-		return false
-	}
+	return left.Cmp(right) == 0
 }
 
 // (ref: https://github.com/starkware-libs/cairo-lang/blob/master/src/starkware/crypto/starkware/crypto/signature/math_utils.py)
@@ -227,48 +453,83 @@ func (sc StarkCurve) MimicEcMultAir(mout, x1, y1, x2, y2 *big.Int) (x *big.Int, 
 // Multiplies by m a point on the elliptic curve with equation y^2 = x^3 + alpha*x + beta mod p.
 // Assumes affine form (x, y) is spread (x1 *big.Int, y1 *big.Int) and that 0 < m < order(point).
 //
-// (ref: https://github.com/starkware-libs/cairo-lang/blob/master/src/starkware/crypto/starkware/crypto/signature/math_utils.py)
+// (ref: https://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.394.3037&rep=rep1&type=pdf
+//	algorithm 5.7 "SPA-resistant left-to-right binary point multiplication")
+// (ref: https://www.semanticscholar.org/paper/Elliptic-Curves-and-Side-Channel-Analysis-Joye/7fc91d3684f1ab63b97d125161daf57af60f2ad9/figure/1)
+// (ref: https://cosade.telecom-paristech.fr/presentations/s2_p2.pdf)
+func (sc StarkCurve) ecMult_DoubleAndAlwaysAdd(m, x1, y1 *big.Int) (x, y *big.Int) {
+	k := sc.rewriteScalar(m)
+	z1 := big.NewInt(1)
+
+	// Two-index table initialization, Q[0] <- P
+	q := [2]struct {
+		x *big.Int
+		y *big.Int
+		z *big.Int
+	}{
+		{
+			x: x1,
+			y: y1,
+			z: z1,
+		},
+		{
+			x: nil,
+			y: nil,
+			z: nil,
+		},
+	}
+
+	// We run the loop `len - 2` times instead of `len - 1` as shown in the algorithm because
+	// we begin `q` initialized with `P` instead of with infinity.
+	for i := k.BitLen() - 2; i >= 0; i-- {
+		q[0].x, q[0].y, q[0].z = sc.double(q[0].x, q[0].y, q[0].z)          // Q[0] <- 2Q[0]
+		q[1].x, q[1].y, q[1].z = sc.add(q[0].x, q[0].y, q[0].z, x1, y1, z1) // Q[1] <- Q[0] + P
+		b := k.Bit(i)                                                       // b    <- bit at position i
+		q[0].x, q[0].y, q[0].z = q[b].x, q[b].y, q[b].z                     // Q[0] <- Q[b]
+	}
+
+	return toAffineForm(q[0].x, q[0].y, q[0].z, sc.P)
+}
+
+func toAffineForm(x, y, z, p *big.Int) (*big.Int, *big.Int) {
+	q := new(big.Int)
+	gx := new(big.Int)
+	gy := new(big.Int)
+	q.GCD(gx, gy, z, p)
+
+	xOut := new(big.Int).Mul(x, gx)
+	xOut.Mod(xOut, p)
+
+	yOut := new(big.Int).Mul(y, gx)
+	yOut.Mod(yOut, p)
+
+	return xOut, yOut
+}
+
+// Rewrites k into an equivalent scalar, such that the first bit (the most-significant
+// bit for the Double-And-Always-Add or Montgomery algo) is 1.
+//
+// The k scalar rewriting obtains an equivalent scalar K = 2^n + (k - 2^n mod q),
+// such that k·G == K·G and K has the n-th bit set to 1. The scalars are equal modulo
+// the group order, k mod q == K mod q.
+//
+// Notice: The EC multiplication algorithms are typically presented as starting with the state (O, P0),
+//	where O is the identity element (or neutral point) of the curve. However, the neutral point is at infinity,
+//	which causes problems for some formulas (non constant-time execution for the naive implementation).
+//	The ladder then starts after the first step, when the state no longer contains the neutral point.
+//
+// (ref: https://www.shiftleft.org/papers/ladder/ladder-tches.pdf)
+func (sc StarkCurve) rewriteScalar(k *big.Int) *big.Int {
+	size := new(big.Int).Lsh(big.NewInt(1), uint(sc.BitSize)) // 2ˆn
+	mod := new(big.Int).Mod(size, sc.N)                       // 2ˆn mod q
+	diff := new(big.Int).Sub(k, mod)                          // (k - 2ˆn mod q)
+	return new(big.Int).Add(size, diff)                       // 2ˆn + (k - 2ˆn mod q)
+}
+
+// Multiplies by m a point on the elliptic curve with equation y^2 = x^3 + alpha*x + beta mod p.
+// Assumes affine form (x, y) is spread (x1 *big.Int, y1 *big.Int) and that 0 < m < order(point).
 func (sc StarkCurve) EcMult(m, x1, y1 *big.Int) (x, y *big.Int) {
-	var _ecMult func(m, x1, y1 *big.Int) (x, y *big.Int)
-
-	_add := func(x1, y1, x2, y2 *big.Int) (x, y *big.Int) {
-		yDelta := new(big.Int).Sub(y1, y2)
-		xDelta := new(big.Int).Sub(x1, x2)
-
-		m := DivMod(yDelta, xDelta, sc.P)
-
-		xm := new(big.Int).Mul(m, m)
-
-		x = new(big.Int).Sub(xm, x1)
-		x = x.Sub(x, x2)
-		x = x.Mod(x, sc.P)
-
-		y = new(big.Int).Sub(x1, x)
-		y = y.Mul(m, y)
-		y = y.Sub(y, y1)
-		y = y.Mod(y, sc.P)
-
-		return x, y
-	}
-
-	// alpha is our Y
-	_ecMult = func(m, x1, y1 *big.Int) (x, y *big.Int) {
-		if m.BitLen() == 1 {
-			return x1, y1
-		}
-		mk := new(big.Int).Mod(m, big.NewInt(2))
-		if mk.Cmp(big.NewInt(0)) == 0 {
-			h := new(big.Int).Div(m, big.NewInt(2))
-			c, d := sc.Double(x1, y1)
-			return _ecMult(h, c, d)
-		}
-		n := new(big.Int).Sub(m, big.NewInt(1))
-		e, f := _ecMult(n, x1, y1)
-		return _add(e, f, x1, y1)
-	}
-
-	x, y = _ecMult(m, x1, y1)
-	return x, y
+	return sc.ecMult_DoubleAndAlwaysAdd(m, x1, y1)
 }
 
 // Finds a nonnegative integer 0 <= x < p such that (m * x) % p == n
