@@ -62,7 +62,7 @@ func TestDeclareTransaction(t *testing.T) {
 			t.Fatal("declare should succeed, instead:", err)
 		}
 		if dec.ClassHash != test.ExpectedClassHash {
-			t.Fatalf("classHash does not match expected, current: %s", dec.ClassHash)
+			t.Fatalf("classHash does not match expected %s, current: %s", test.ExpectedClassHash, dec.ClassHash)
 		}
 		if diff, err := spy.Compare(dec, false); err != nil || diff != "FullMatch" {
 			spy.Compare(dec, true)
